@@ -62,9 +62,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, message: 'Invalid JSON' });
   }
 
+  // 🔍 LOG DEBUG: In ra toàn bộ dữ liệu SePay gửi sang
+  console.log("=== DỮ LIỆU TỪ SEPAY ===");
+  console.log("Nội dung CK (content):", payload.content);
+  console.log("Số tiền (transferAmount):", payload.transferAmount);
+
   const content = payload.content || '';
   const orderCodeMatch = content.match(/young\d{6}/);
+  
   if (!orderCodeMatch) {
+    console.log("❌ LỖI: Không tìm thấy mã đơn (young + 6 số) trong nội dung chuyển khoản.");
     return res.status(200).json({ success: true });
   }
   const orderCode = orderCodeMatch[0];
@@ -73,19 +80,22 @@ export default async function handler(req, res) {
   if (payload.transferAmount === 20000) {
     icloudEmail = 'younjmod@gmail.com';
     icloudPassword = 'mkchilafthunghiem';
+    console.log("✅ Nhận diện gói 20K");
   } else if (payload.transferAmount === 30000) {
     icloudEmail = 'younjmodid2@icloud.com';
     icloudPassword = 'mkchilatesstkhongphaithat';
+    console.log("✅ Nhận diện gói 30K");
   } else {
+    console.log("❌ LỖI: Số tiền không khớp 20.000 hoặc 30.000. Số tiền thực tế nhận được:", payload.transferAmount);
     return res.status(200).json({ success: true });
   }
 
   const channelName = `order-${orderCode}`;
+  console.log(`🚀 Chuẩn bị gửi Pusher tới kênh: ${channelName}`);
 
   try {
     const pusherUrl = `https://api-${PUSHER_CLUSTER}.pusher.com/apps/${PUSHER_APP_ID}/events`;
     
-    // ✅ SỬA LỖI: Đảm bảo data là string và channels là mảng string
     const pusherBody = {
       name: 'payment_success',
       channels: [String(channelName)],
@@ -112,13 +122,12 @@ export default async function handler(req, res) {
 
     if (!pusherRes.ok) {
       const errText = await pusherRes.text();
-      console.error(`Pusher API error: ${pusherRes.status}`, errText);
-      return res.status(200).json({ success: true, note: 'Pusher failed' });
+      console.error(`❌ Lỗi Pusher API (${pusherRes.status}):`, errText);
     } else {
-      console.log(`✅ Đã gửi iCloud cho đơn ${orderCode} qua kênh ${channelName}`);
+      console.log(`🎉 THÀNH CÔNG: Đã gửi iCloud qua Pusher cho đơn ${orderCode}`);
     }
   } catch (error) {
-    console.error('Lỗi khi gửi Pusher:', error);
+    console.error('❌ Lỗi khi fetch Pusher:', error);
   }
 
   return res.status(200).json({ success: true });
