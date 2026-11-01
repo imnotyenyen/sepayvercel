@@ -133,10 +133,10 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true });
   }
 
-  console.log(`✅ Gói ${amount}, đơn ${orderCode}. Gửi Pusher tới kênh order-${orderCode}`);
+  console.log(`✅ Gói ${amount}, đơn ${orderCode}. Gửi Pusher tới kênh cache-order-${orderCode}`);
 
   try {
-    await pusherTrigger(`order-${orderCode}`, 'payment_success', {
+    await pusherTrigger(`cache-order-${orderCode}`, 'payment_success', {
       email: account.email,
       password: account.password,
     });
