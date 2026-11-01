@@ -1,19 +1,26 @@
-// api/webhook.js — SePay Webhook + Pusher (Vercel Serverless) — bản đã sửa
+// api/webhook.js — SePay Webhook + Pusher (Vercel Serverless)
+// Giá trị đang để thẳng trong code để test. Khi chạy ổn, thêm biến môi trường
+// trên Vercel cùng tên thì code tự dùng biến đó (ưu tiên hơn giá trị mặc định).
 import crypto from 'crypto';
 
-const {
-  PUSHER_APP_ID,
-  PUSHER_KEY,
-  PUSHER_SECRET,
-  PUSHER_CLUSTER,
-  SEPAY_API_KEY,         // kiểu "Apikey" (Authorization header) — cách SePay dùng phổ biến
-  SEPAY_WEBHOOK_SECRET,  // kiểu HMAC (nếu tài khoản SePay của bạn có gửi signature)
-} = process.env;
+const PUSHER_APP_ID  = process.env.PUSHER_APP_ID  || '2208543';
+const PUSHER_KEY     = process.env.PUSHER_KEY     || 'a0a4b6ef806dcf80d133';
+const PUSHER_SECRET  = process.env.PUSHER_SECRET  || '5f33e372eacee460c8a6';
+const PUSHER_CLUSTER = process.env.PUSHER_CLUSTER || 'ap1';
 
-// Tài khoản theo gói — đưa vào Environment Variables trên Vercel, đừng hardcode
+// SePay: giữ nguyên biến đang có trên Vercel (xác thực đã chạy đúng)
+const SEPAY_API_KEY        = process.env.SEPAY_API_KEY;
+const SEPAY_WEBHOOK_SECRET = process.env.SEPAY_WEBHOOK_SECRET;
+
 const ACCOUNTS = {
-  20000: { email: process.env.ICLOUD_20K_EMAIL, password: process.env.ICLOUD_20K_PASSWORD },
-  30000: { email: process.env.ICLOUD_30K_EMAIL, password: process.env.ICLOUD_30K_PASSWORD },
+  20000: {
+    email:    process.env.ICLOUD_20K_EMAIL    || 'younjmod@gmail.com',
+    password: process.env.ICLOUD_20K_PASSWORD || 'mkchilafthunghiem',
+  },
+  30000: {
+    email:    process.env.ICLOUD_30K_EMAIL    || 'younjmodid2@icloud.com',
+    password: process.env.ICLOUD_30K_PASSWORD || 'mkchilatesstkhongphaithat',
+  },
 };
 
 export const config = { api: { bodyParser: false } };
@@ -34,12 +41,10 @@ function safeEqual(a, b) {
 }
 
 function isAuthorized(req, rawBody) {
-  // Cách 1: Authorization: Apikey xxx
   if (SEPAY_API_KEY) {
     const auth = req.headers['authorization'] || '';
     if (safeEqual(auth, `Apikey ${SEPAY_API_KEY}`)) return true;
   }
-  // Cách 2: HMAC signature
   const sig = req.headers['x-sepay-signature'];
   const ts = req.headers['x-sepay-timestamp'];
   if (SEPAY_WEBHOOK_SECRET && sig && ts) {
@@ -54,12 +59,12 @@ function isAuthorized(req, rawBody) {
   return false;
 }
 
-// ✅ Gọi Pusher REST API ĐÚNG CHUẨN: xác thực qua query string, KHÔNG phải header
+// Gọi Pusher REST API: xác thực qua query string
 async function pusherTrigger(channel, eventName, dataObj) {
   const body = JSON.stringify({
     name: eventName,
-    channel,                       // 1 kênh
-    data: JSON.stringify(dataObj), // data phải là chuỗi
+    channel,
+    data: JSON.stringify(dataObj),
   });
 
   const path = `/apps/${PUSHER_APP_ID}/events`;
@@ -70,7 +75,6 @@ async function pusherTrigger(channel, eventName, dataObj) {
     body_md5: crypto.createHash('md5').update(body).digest('hex'),
   };
 
-  // Các tham số phải sắp xếp theo thứ tự chữ cái
   const query = Object.keys(params)
     .sort()
     .map((k) => `${k}=${params[k]}`)
@@ -97,7 +101,7 @@ export default async function handler(req, res) {
   const rawBody = await getRawBody(req);
 
   if (!isAuthorized(req, rawBody)) {
-    console.log('❌ Xác thực SePay thất bại. Headers nhận được:', Object.keys(req.headers).join(', '));
+    console.log('❌ Xác thực thất bại (có thể là request từ Pusher Webhooks, bỏ qua được)');
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
@@ -110,26 +114,26 @@ export default async function handler(req, res) {
 
   console.log('=== DỮ LIỆU TỪ SEPAY ===', JSON.stringify(payload));
 
-  // Chỉ xử lý tiền VÀO
   if (payload.transferType && payload.transferType !== 'in') {
     return res.status(200).json({ success: true });
   }
 
-  // ✅ Không phân biệt hoa/thường (ngân hàng hay đổi thành YOUNG123456) + thử cả trường code
   const haystack = `${payload.content || ''} ${payload.code || ''} ${payload.description || ''}`;
   const match = haystack.match(/young\s?(\d{6})/i);
   if (!match) {
     console.log('❌ Không tìm thấy mã đơn trong nội dung CK:', haystack);
     return res.status(200).json({ success: true });
   }
-  const orderCode = `young${match[1]}`; // luôn chữ thường để khớp tên kênh ở frontend
+  const orderCode = `young${match[1]}`;
 
   const amount = Number(payload.transferAmount);
   const account = ACCOUNTS[amount];
-  if (!account || !account.email) {
+  if (!account) {
     console.log('❌ Số tiền không khớp gói nào:', amount);
     return res.status(200).json({ success: true });
   }
+
+  console.log(`✅ Gói ${amount}, đơn ${orderCode}. Gửi Pusher tới kênh order-${orderCode}`);
 
   try {
     await pusherTrigger(`order-${orderCode}`, 'payment_success', {
@@ -139,7 +143,7 @@ export default async function handler(req, res) {
     console.log(`🎉 Đã gửi tài khoản cho đơn ${orderCode}`);
   } catch (err) {
     console.error('❌ Lỗi Pusher:', err.message);
-    return res.status(500).json({ success: false }); // để SePay retry
+    return res.status(500).json({ success: false });
   }
 
   return res.status(200).json({ success: true });
