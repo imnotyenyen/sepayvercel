@@ -1,58 +1,68 @@
-/**
- * Vercel serverless — nhận webhook SePay, forward sang Cloudflare Worker
- * Env vars (set trên Vercel dashboard):
- *   SEPAY_API_KEY   — SePay dashboard cấp
- *   WORKER_URL      — https://younj-payment.YOUR-SUB.workers.dev
- *   WEBHOOK_SECRET  — khớp với Worker
- */
+import Pusher from "pusher";
 
-export const config = { api: { bodyParser: true } };
+// Khởi tạo Pusher với thông tin từ dashboard Pusher của bạn
+const pusher = new Pusher({
+  appId: "2208543",
+  key: "a0a4b6ef806dcf80d133",
+  secret: "5f33e372eacee460c8a6",
+  cluster: "ap1",
+  useTLS: true
+});
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
-  // 1. Xác thực SePay
-  const auth = req.headers.authorization || "";
-  if (auth !== `Apikey ${process.env.SEPAY_API_KEY}`) {
-    console.warn("❌ SePay auth failed");
-    return res.status(401).json({ error: "Unauthorized" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const payload = req.body || {};
-  console.log("📥 SePay webhook:", {
-    id: payload.id,
-    type: payload.transferType,
-    amount: payload.transferAmount,
-    content: payload.content,
-  });
-
-  // 2. Chỉ xử lý tiền vào
-  if (payload.transferType !== "in") {
-    return res.json({ ok: true, skipped: "not-in" });
-  }
-
-  // 3. Forward sang Worker
   try {
-    const r = await fetch(process.env.WORKER_URL + "/pay", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Webhook-Secret": process.env.WEBHOOK_SECRET,
-      },
-      body: JSON.stringify({
-        content:         payload.content,
-        transferAmount:  payload.transferAmount,
-        referenceCode:   payload.referenceCode,
-        gateway:         payload.gateway,
-        transactionDate: payload.transactionDate,
-      }),
-    });
+    const data = req.body;
+    
+    // SePay webhook data structure cơ bản
+    // data.content: Nội dung chuyển khoản (Ví dụ: "young974385")
+    // data.transferAmount: Số tiền chuyển
+    const content = data.content || "";
+    const amount = Number(data.transferAmount || data.amount || 0);
 
-    const data = await r.json();
-    console.log("✅ Worker responded:", data);
-    return res.json({ ok: true, worker: data });
-  } catch (err) {
-    console.error("❌ Forward to Worker failed:", err);
-    return res.status(502).json({ error: "Worker unreachable", detail: err.message });
+    // Lọc nội dung chứa cú pháp "young" + 6 chữ số ngẫu nhiên
+    const match = content.match(/young([0-9]{6})/i);
+    if (!match) {
+      return res.status(200).json({ success: true, message: "Ignored: Invalid syntax" });
+    }
+
+    const transferCode = match[0].toLowerCase(); // ví dụ: young974385
+
+    // Xác định gói và tài khoản mật khẩu tương ứng dựa vào số tiền
+    let accountInfo = null;
+
+    if (amount >= 20000 && amount < 30000) {
+      // Gói 20k
+      accountInfo = {
+        package: "Gói 20k (Minecraft)",
+        email: "younjmod@gmail.com",
+        pass: "mkchilafthunghiem"
+      };
+    } else if (amount >= 30000) {
+      // Gói 30k (Combo)
+      accountInfo = {
+        package: "Gói 30k (Combo)",
+        email: "younjmodid2@icloud.com",
+        pass: "mkchilatesstkhongphaithat"
+      };
+    }
+
+    if (accountInfo) {
+      // Bắn sự kiện qua Pusher đến channel có tên là mã giao dịch
+      await pusher.trigger(`payment-channel-${transferCode}`, "payment-success", {
+        success: true,
+        amount: amount,
+        content: content,
+        ...accountInfo
+      });
+    }
+
+    return res.status(200).json({ success: true, message: "Webhook processed successfully" });
+  } catch (error) {
+    console.error("Webhook error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 }
